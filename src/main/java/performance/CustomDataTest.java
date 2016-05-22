@@ -1,13 +1,25 @@
 package performance;
 
+import com.google.common.base.Stopwatch;
+import com.google.common.collect.Sets;
 import com.stormpath.sdk.account.Account;
 import com.stormpath.sdk.account.Accounts;
-import com.stormpath.sdk.application.Application;
 import com.stormpath.sdk.client.Client;
 import com.stormpath.sdk.client.Clients;
+import com.stormpath.sdk.directory.CustomData;
 import com.stormpath.sdk.lang.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 public class CustomDataTest {
 
@@ -19,47 +31,92 @@ public class CustomDataTest {
             "https://api.stormpath.com/v1" :
             System.getenv("STORMPATH_BASE_URL");
 
-        String applicationHref = System.getenv("STORMPATH_APPLICATION_HREF");
+        String accountHref = System.getenv("STORMPATH_ACCOUNT_HREF");
 
-        Assert.hasText(applicationHref);
+        Assert.hasText(accountHref, "Provide a fully qualified href to an account using the STORMPATH_ACCOUNT_HREF environment variable.");
 
-        String email = args[0];
+        int numIter = Integer.parseInt(args[0]);
 
-        Assert.hasText(email);
-
-        int numIter = Integer.parseInt(args[1]);
+        Assert.isTrue(numIter > 0, "Provide the number of iterations to perform as a command line parameter > 0.");
 
         Client client = Clients.builder().setBaseUrl(baseUrl).build();
 
-        Application application = client.getResource(applicationHref, Application.class);
-        log.info("Application: " + application.getHref() + ", " + application.getName());
-
-        doCustomDataTest(application, email, numIter);
+        doCustomDataTest(client, accountHref, numIter);
     }
 
-    private static final String LOREM = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
-        "Suspendisse sed ornare nisl, facilisis sodales ante. Nullam et ornare leo, quis congue erat. " +
-        "Mauris neque lorem, feugiat nec feugiat in, semper eu purus. Aliquam vel vulputate sapien. " +
-        "Maecenas bibendum venenatis nunc viverra convallis. Vivamus sed orci et turpis vulputate condimentum. " +
-        "Proin congue est efficitur nunc volutpat, in porttitor tortor auctor. " +
-        "Nunc eu libero euismod, laoreet purus ut, lobortis lorem. Nunc nec pulvinar orci. " +
-        "Pellentesque dapibus et velit a tincidunt. Morbi ornare purus nec magna imperdiet tincidunt. " +
-        "Proin pretium felis nec imperdiet porta. Donec viverra libero dolor, at varius est tempor a. " +
-        "Donec nec tortor eu nisi gravida luctus et vitae diam. Fusce at facilisis tellus, et pharetra dui. " +
-        "Proin congue, nunc a scelerisque placerat, sapien ipsum consectetur arcu, sit amet convallis dui elit nec augue.";
+    private static void doCustomDataTest(Client client, String accountHref, int numIter) {
+        final Random RNG = new Random();
 
-    private static void doCustomDataTest(Application application, String email, int numIter) {
-        numIter = (numIter > 0) ? numIter : 100;
+        int numValid = 0;
+        int numFailed = 0;
+        Stopwatch stopwatch = Stopwatch.createStarted();
+        for (int i = 0; i < numIter; i++) {
+            // sleep, so we don't brown out Stormpath
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            }
 
-        for (int i=0; i < numIter; i++) {
-            Account account = application.getAccounts(Accounts.where(Accounts.email().eqIgnoreCase(email))).single();
-            account.getCustomData().put("iter" + i, i + " " + LOREM);
-            account.getCustomData().save();
+            // Get account and write custom data.
+            Account account = client.getResource(
+                accountHref, Account.class, Accounts.options().withCustomData()
+            );
+            CustomData customData = account.getCustomData();
+            customData.put("test-key", RNG.nextInt());
 
-            account = null;
-            account = application.getAccounts(Accounts.where(Accounts.email().eqIgnoreCase(email))).single();
-            Assert.isTrue((i + " " + LOREM).equals(account.getCustomData().get("iter" + i)));
-            log.info("Success! Got iter=" + i + " from CustomData");
+            log.info("Iteration {} of {} updated test-key with: {}", i+1, numIter, customData.get("test-key"));
+
+            // Copy custom data into a map, so we can do equality tests on it later.
+            Map<String, Object> customDataMap = new HashMap<>(customData);
+
+            customData.save();
+
+            // Immediately get account back and compare custom data.
+            Account returnedAccount = client.getResource(
+                accountHref, Account.class, Accounts.options().withCustomData()
+            );
+            CustomData returnedCustomData = returnedAccount.getCustomData();
+            Map<String, Object> returnedCustomDataMap = new HashMap<>(returnedCustomData);
+
+            // Custom Data includes a key "modifiedAt", which is always different. Remove that from the map, so we
+            // can validate in earnest.
+            customDataMap.remove("modifiedAt");
+            returnedCustomDataMap.remove("modifiedAt");
+
+            // Compare and keep stats.
+            boolean isValid = Objects.equals(customDataMap, returnedCustomDataMap);
+            if (isValid) {
+                numValid++;
+            } else {
+                numFailed++;
+                describeFailure(customDataMap, returnedCustomDataMap);
+            }
+        }
+
+        log.info("Finished {} iterations in {} seconds.", numIter, stopwatch.elapsed(TimeUnit.SECONDS));
+        log.info("numValid: {}", numValid);
+        log.info("numFailed: {}", numFailed);
+    }
+
+    private static void describeFailure(
+        Map<String, Object> submittedCustomDataMap,
+        Map<String, Object> returnedCustomDataMap
+    ) {
+        // Union the keys, so we can compare maps on all keys.
+        Set<String> allKeySet = Sets.union(submittedCustomDataMap.keySet(), returnedCustomDataMap.keySet());
+
+        // Get the keys in order, so we can describe differences in a stable way.
+        List<String> allKeyList = new ArrayList<>(allKeySet);
+        Collections.sort(allKeyList);
+
+        // Iterate the keys and log the differences.
+        for (String oneKey : allKeyList) {
+            Object submittedValue = submittedCustomDataMap.get(oneKey);
+            Object returnedValue = returnedCustomDataMap.get(oneKey);
+            if (!Objects.equals(submittedValue, returnedValue)) {
+                log.error("For key {}, expected {}, got {}.", oneKey, submittedValue, returnedValue);
+            }
         }
     }
 }

@@ -3,10 +3,10 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.stormpath.sdk</groupId>
-    <artifactId>stormpath-sdk-examples-quickstart</artifactId>
+    <artifactId>stormpath-sdk-performance</artifactId>
     <version>0.1.0-SNAPSHOT</version>
 
-    <name>Stormpath Java SDK :: Examples :: Quickstart Code</name>
+    <name>Stormpath Java SDK :: Performance</name>
     <description>A simple (non-web) application to demonstrate the example code in the Stormpath Java Quickstart</description>
     <packaging>jar</packaging>
 
@@ -22,6 +22,16 @@
             <groupId>com.stormpath.sdk</groupId>
             <artifactId>stormpath-sdk-api</artifactId>
             <version>${stormpath.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>19.0</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-lang</groupId>
+            <artifactId>commons-lang</artifactId>
+            <version>2.6</version>
         </dependency>
         <dependency>
             <groupId>com.stormpath.sdk</groupId>
